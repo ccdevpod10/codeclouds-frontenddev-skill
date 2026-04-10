@@ -1,0 +1,50 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.npm
+
+# Build outputs
+dist/
+build/
+*.min.js
+*.min.css
+
+# Puppeteer / Playwright
+.local-chromium/
+.playwright/
+
+# Captured assets (runtime output)
+screenshots/
+captures/
+downloads/
+output/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env
+.env
+.env.*
+!.env.example
