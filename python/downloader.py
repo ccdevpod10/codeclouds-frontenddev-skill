@@ -2,10 +2,11 @@
 """
 downloader.py
 Downloads all assets from manifest.json, rewrites HTML paths to local relative paths.
+Output is always created in the current working directory (cwd), never relative to this script.
 
 Usage:  python3 downloader.py <manifest.json>
-Output: output/assets/<type>/...
-        output/src/index.html
+Output: <cwd>/output/assets/<type>/...
+        <cwd>/output/src/index.html
 """
 
 import json
@@ -37,6 +38,20 @@ HEADERS = {
     'Accept-Encoding': 'gzip, deflate, br',
 }
 
+# ── Tracking patterns (strip from HTML, skip download) ────────────────────────
+TRACKING_PATTERNS = [
+    'googletagmanager',
+    'gtag',
+    'facebook.net',
+    'fbevents',
+    'analytics',
+    'pixel',
+]
+
+def is_tracking(url: str) -> bool:
+    lower = url.lower()
+    return any(p in lower for p in TRACKING_PATTERNS)
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 if len(sys.argv) < 2:
     print('Usage: python3 downloader.py <manifest.json>', file=sys.stderr)
@@ -47,7 +62,8 @@ if not manifest_path.exists():
     print(f'[downloader] manifest not found: {manifest_path}', file=sys.stderr)
     sys.exit(1)
 
-root_dir      = manifest_path.parent.parent   # output/
+# Output always in cwd — never relative to this script
+root_dir      = Path(os.getcwd()) / 'output'
 assets_dir    = root_dir / 'assets'
 src_dir       = root_dir / 'src'
 reference_dir = root_dir / 'reference'
@@ -110,6 +126,7 @@ def download_one(entry: dict) -> tuple:
 
 # ── Download ──────────────────────────────────────────────────────────────────
 print(f'[downloader] {len(assets)} assets  (concurrency={CONCURRENCY})')
+print(f'[downloader] output root: {root_dir}')
 
 url_to_local: dict[str, str] = {}
 failed: list[str] = []
@@ -154,6 +171,19 @@ def rewrite_attr(tag, attr):
         tag[attr] = rel(local)
 
 
+# ── Strip tracking scripts from HTML ─────────────────────────────────────────
+stripped = 0
+for el in soup.find_all('script', src=True):
+    src = el.get('src', '')
+    if is_tracking(src):
+        el.decompose()
+        stripped += 1
+        print(f'  [strip] tracking script: {src[:80]}')
+
+if stripped:
+    print(f'[downloader] stripped {stripped} tracking script(s)')
+
+# ── Rewrite asset paths ───────────────────────────────────────────────────────
 # link[href], script[src], img[src], source[src], video[src], audio[src]
 for el in soup.find_all('link', href=True):
     rewrite_attr(el, 'href')
@@ -191,7 +221,24 @@ for el in soup.find_all('style'):
     if el.string:
         el.string = rewrite_inline_style(el.string)
 
+# ── Rewrite JS src paths in downloaded JS files ───────────────────────────────
+js_dir = assets_dir / 'js'
+if js_dir.exists():
+    for js_file in js_dir.glob('*.js'):
+        try:
+            content = js_file.read_text(errors='replace')
+            changed = False
+            for orig_url, local_path in url_to_local.items():
+                if orig_url in content:
+                    rel_path = os.path.relpath(local_path, js_file.parent)
+                    content = content.replace(orig_url, rel_path)
+                    changed = True
+            if changed:
+                js_file.write_text(content, encoding='utf-8')
+        except Exception:
+            pass
+
 out_html = src_dir / 'index.html'
 out_html.write_text(str(soup), encoding='utf-8')
 print(f'[downloader] wrote  →  {out_html}')
-print('[downloader] done — run: node scripts/build.js')
+print('[downloader] done — run: node scripts/build.js <REFERENCE_URL>')

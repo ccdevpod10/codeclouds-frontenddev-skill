@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
  * build.js
- * Injects overlay image + toggle script into output/src/index.html.
- * Writes output/src/index.built.html.
+ * Injects live iframe overlay + toggle script into output/src/index.html.
+ * Overlay loads reference URL live (not a screenshot image).
+ * Writes <cwd>/output/src/index.built.html.
  *
- * Usage: node build.js
+ * Usage: node build.js <REFERENCE_URL>
  */
 
 'use strict';
@@ -12,11 +13,15 @@
 const fs   = require('fs');
 const path = require('path');
 
-const srcFile  = path.resolve(__dirname, '../output/src/index.html');
-const destFile = path.resolve(__dirname, '../output/src/index.built.html');
+const referenceUrl = process.argv[2];
+if (!referenceUrl) {
+  console.error('Usage: node build.js <REFERENCE_URL>');
+  process.exit(1);
+}
 
-// Path from index.built.html to the desktop reference screenshot
-const overlayImgSrc = '../reference/desktop.png';
+const OUTPUT_DIR = path.join(process.cwd(), 'output');
+const srcFile  = path.join(OUTPUT_DIR, 'src', 'index.html');
+const destFile = path.join(OUTPUT_DIR, 'src', 'index.built.html');
 
 if (!fs.existsSync(srcFile)) {
   console.error('[build] output/src/index.html not found — run downloader.py first');
@@ -37,7 +42,7 @@ if (!/<meta[^>]+name=["']viewport["']/i.test(html)) {
 // ── Overlay CSS ────────────────────────────────────────────────────────────
 const overlayStyle = `
 <style id="clone-overlay-style">
-  .clone-overlay {
+  #clone-overlay {
     position: fixed;
     top: 0;
     left: 0;
@@ -46,8 +51,7 @@ const overlayStyle = `
     opacity: 0.5;
     pointer-events: none;
     z-index: 9999;
-    object-fit: cover;
-    object-position: top left;
+    border: none;
     display: none;
   }
 
@@ -69,30 +73,28 @@ const overlayStyle = `
 
 // ── Overlay HTML elements ──────────────────────────────────────────────────
 const overlayHtml = `
-<!-- clone overlay -->
-<img
+<!-- clone overlay: live iframe -->
+<iframe
   id="clone-overlay"
-  class="clone-overlay"
-  src="${overlayImgSrc}"
-  alt="pixel reference overlay"
->
-<div id="clone-overlay-hud">[O] overlay OFF &nbsp;|&nbsp; scroll = opacity</div>`;
+  src="${referenceUrl}"
+></iframe>
+<div id="clone-overlay-hud">[O] overlay OFF</div>`;
 
-// ── Overlay toggle script ──────────────────────────────────────────────────
+// ── Overlay toggle + scroll sync script ───────────────────────────────────
 const overlayScript = `
 <script id="clone-overlay-script">
 (function () {
   'use strict';
-  var overlay  = document.getElementById('clone-overlay');
-  var hud      = document.getElementById('clone-overlay-hud');
-  var visible  = false;
-  var opacity  = 0.5;
+  var overlay = document.getElementById('clone-overlay');
+  var hud     = document.getElementById('clone-overlay-hud');
+  var visible = false;
+  var opacity = 0.5;
 
   function update() {
     overlay.style.display = visible ? 'block' : 'none';
     overlay.style.opacity = opacity;
-    hud.textContent = '[O] overlay ' + (visible ? 'ON ' : 'OFF') +
-      '  |  scroll = opacity (' + Math.round(opacity * 100) + '%)';
+    hud.textContent = '[O] overlay ' + (visible ? 'ON' : 'OFF') +
+      (visible ? '  |  wheel = opacity (' + Math.round(opacity * 100) + '%)' : '');
   }
 
   document.addEventListener('keydown', function (e) {
@@ -107,6 +109,15 @@ const overlayScript = `
     opacity = Math.min(1, Math.max(0.05, opacity - e.deltaY * 0.001));
     update();
   }, { passive: true });
+
+  window.addEventListener('scroll', function () {
+    if (!visible) return;
+    try {
+      overlay.contentWindow.scrollTo(window.scrollX, window.scrollY);
+    } catch (err) {
+      // cross-origin scroll blocked — expected for external URLs
+    }
+  });
 
   update();
 })();
@@ -130,5 +141,6 @@ if (/<\/body>/i.test(html)) {
 fs.mkdirSync(path.dirname(destFile), { recursive: true });
 fs.writeFileSync(destFile, html, 'utf8');
 console.log(`[build] written → ${destFile}`);
-console.log('[build] press O in browser to toggle overlay');
+console.log(`[build] overlay URL: ${referenceUrl}`);
+console.log('[build] press O in browser to toggle live iframe overlay');
 console.log('[build] scroll wheel adjusts opacity while overlay is ON');

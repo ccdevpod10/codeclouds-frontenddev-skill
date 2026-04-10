@@ -82,7 +82,7 @@ echo "STEP 0 COMPLETE"
 
 ### STEP 1 — Navigate and screenshot
 
-Run `node scripts/capture.js <URL>` to open the URL in headless Chromium, capture a full-page desktop screenshot at 1440px viewport and a mobile screenshot at 375px viewport, and save both to `output/reference/`.
+Run `node scripts/capture.js <URL>` from the **project root** to open the URL in headless Chromium, capture a full-page desktop screenshot at 1440px viewport and a mobile screenshot at 375px viewport, and save both to `output/reference/` in the current working directory.
 
 ```bash
 node scripts/capture.js "https://example.com"
@@ -100,7 +100,7 @@ If command fails: read the error, check puppeteer/playwright is installed, retry
 
 ### STEP 2 — Extract page data
 
-Run `node scripts/extract.js <URL>` to capture the full serialized HTML, enumerate all external CSS, JS, image, and font URLs, and write the asset manifest.
+Run `node scripts/extract.js <URL>` from the **project root** to capture the full serialized HTML, enumerate all external CSS, JS, image, and font URLs, strip tracking/analytics scripts (GTM, Facebook Pixel, analytics), and write the asset manifest.
 
 ```bash
 node scripts/extract.js "https://example.com"
@@ -112,13 +112,18 @@ output/reference/page.html
 output/reference/manifest.json
 ```
 
+Tracking scripts removed automatically:
+- googletagmanager, gtag, facebook, analytics, pixel
+
+Functional JS (UI, event handlers, interactions) is kept.
+
 If command fails: read the error, check browser lib, retry.
 
 ---
 
 ### STEP 3 — Download all assets
 
-Run `python3 python/downloader.py output/reference/manifest.json` to download every asset in the manifest, organize under `output/assets/`, rewrite HTML src/href paths to relative local paths, and write the rewritten HTML.
+Run `python3 python/downloader.py output/reference/manifest.json` from the **project root** to download every asset in the manifest (CSS, JS, images, fonts), organize under `output/assets/`, strip remaining tracking script tags from HTML, rewrite all src/href paths to relative local paths, and write the rewritten HTML.
 
 ```bash
 python3 python/downloader.py output/reference/manifest.json
@@ -137,12 +142,12 @@ If command fails: read the error, check python deps, retry.
 
 ---
 
-### STEP 4 — Build clean page
+### STEP 4 — Build clean page with live overlay
 
-Run `node scripts/build.js` to read `output/src/index.html`, inject the overlay `<img>` and toggle script (key `O`), ensure responsive viewport meta exists, and write the final page.
+Run `node scripts/build.js <REFERENCE_URL>` from the **project root** to read `output/src/index.html`, inject the live iframe overlay and toggle script (key `O`), inject scroll sync, ensure responsive viewport meta exists, and write the final page.
 
 ```bash
-node scripts/build.js
+node scripts/build.js "https://example.com"
 ```
 
 Expected output:
@@ -159,29 +164,30 @@ If command fails: read the error, fix, retry.
 Check all required output files. If any is missing, re-run the corresponding step.
 
 ```bash
-# Check and re-run if missing
+URL="https://example.com"
+
 [ -f output/reference/desktop.png ]     || node scripts/capture.js "$URL"
 [ -f output/reference/mobile.png ]      || node scripts/capture.js "$URL"
 [ -f output/reference/manifest.json ]   || node scripts/extract.js "$URL"
 [ -f output/reference/page.html ]       || node scripts/extract.js "$URL"
 [ -d output/assets ]                    || python3 python/downloader.py output/reference/manifest.json
 [ -f output/src/index.html ]            || python3 python/downloader.py output/reference/manifest.json
-[ -f output/src/index.built.html ]      || node scripts/build.js
+[ -f output/src/index.built.html ]      || node scripts/build.js "$URL"
 
 echo "ALL OUTPUT FILES PRESENT"
 ls -lh output/reference/ output/src/ output/assets/
 ```
 
-Open `output/src/index.built.html` in a browser. Press `O` to toggle the reference overlay. Scroll while overlay is ON to adjust opacity. Align until pixel-matched.
+Open `output/src/index.built.html` in a browser. Press `O` to toggle the live reference overlay. Use scroll wheel to adjust opacity while overlay is ON. Scroll the page to sync the overlay position.
 
 ---
 
 ## Overlay system
 
-The overlay element loaded into the built page:
+The overlay is a **live iframe** that loads the reference URL directly — not a screenshot image.
 
 ```css
-.clone-overlay {
+#clone-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -190,20 +196,46 @@ The overlay element loaded into the built page:
   opacity: 0.5;
   pointer-events: none;
   z-index: 9999;
-  object-fit: cover;
-  object-position: top left;
+  border: none;
   display: none;
 }
 ```
 
-Toggle with key `O`. Scroll to adjust opacity while overlay is visible.
+Toggle with key `O`. Scroll wheel adjusts opacity while overlay is visible. Page scroll syncs to iframe scroll position automatically.
+
+Scroll sync:
+```js
+window.addEventListener('scroll', () => {
+  const iframe = document.getElementById('clone-overlay');
+  iframe.contentWindow.scrollTo(window.scrollX, window.scrollY);
+});
+```
+
+---
+
+## JS filtering rules
+
+**Removed** (tracking/analytics only):
+- googletagmanager
+- gtag
+- facebook.net / fbevents
+- analytics
+- pixel
+
+**Kept** (everything else):
+- UI scripts
+- Event handlers
+- Interaction libraries
+- All functional JavaScript
 
 ---
 
 ## Output structure
 
+All output is created in the **current working directory** (project root where commands are run), never inside the skill directory.
+
 ```
-output/
+<cwd>/output/
   reference/
     desktop.png
     mobile.png
@@ -224,8 +256,11 @@ output/
 ## STRICT RULES
 
 - STEP 0 runs first — always — no exceptions
+- All output goes to `process.cwd()/output` — NEVER `__dirname`
 - Python downloads all assets — agent must not download manually
 - Every step runs a real executable command
 - If a step errors: read error → diagnose → fix → retry
 - No skipping, no placeholders, no fake steps
 - STEP 5 self-heals missing files by re-running the responsible step
+- Overlay = live iframe (NOT screenshot image)
+- Tracking JS stripped; functional JS kept

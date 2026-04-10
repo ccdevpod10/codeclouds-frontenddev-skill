@@ -2,12 +2,13 @@
 /**
  * extract.js
  * Captures full page HTML and builds an asset manifest.
+ * Strips tracking/analytics scripts. Keeps all functional JS.
  * Supports puppeteer (default) and playwright (CLONE_BROWSER=playwright).
  *
  * Usage: node extract.js <URL>
  * Output:
- *   output/reference/page.html
- *   output/reference/manifest.json
+ *   <cwd>/output/reference/page.html
+ *   <cwd>/output/reference/manifest.json
  */
 
 'use strict';
@@ -21,8 +22,51 @@ if (!rawUrl) {
   process.exit(1);
 }
 
-const outDir = path.resolve(__dirname, '../output/reference');
+const OUTPUT_DIR = path.join(process.cwd(), 'output');
+const outDir = path.join(OUTPUT_DIR, 'reference');
 fs.mkdirSync(outDir, { recursive: true });
+
+// ── Tracking patterns to strip ─────────────────────────────────────────────
+const TRACKING_PATTERNS = [
+  'googletagmanager',
+  'gtag',
+  'facebook.net',
+  'fbevents',
+  'analytics',
+  'pixel',
+];
+
+function isTracking(url) {
+  const lower = url.toLowerCase();
+  return TRACKING_PATTERNS.some(p => lower.includes(p));
+}
+
+// ── Strip tracking script tags from HTML string ────────────────────────────
+function stripTrackingScripts(htmlStr) {
+  // Self-closing script tags with tracking src
+  htmlStr = htmlStr.replace(
+    /<script\b([^>]*)\bsrc=["']([^"']*)["']([^>]*)\/>/gi,
+    (match, pre, src, post) => {
+      if (isTracking(src)) {
+        console.log(`[extract] strip tracking (self-close): ${src}`);
+        return `<!-- tracking removed: ${src} -->`;
+      }
+      return match;
+    }
+  );
+  // Regular script tags with tracking src
+  htmlStr = htmlStr.replace(
+    /<script\b([^>]*)\bsrc=["']([^"']*)["']([^>]*)>([\s\S]*?)<\/script>/gi,
+    (match, pre, src, post, body) => {
+      if (isTracking(src)) {
+        console.log(`[extract] strip tracking: ${src}`);
+        return `<!-- tracking removed: ${src} -->`;
+      }
+      return match;
+    }
+  );
+  return htmlStr;
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function categorize(u) {
@@ -180,17 +224,26 @@ async function runPlaywright() {
 
   const { networkUrls, domUrls, html } = result;
 
-  // Save raw HTML
+  // Strip tracking scripts from HTML before saving
+  const filteredHtml = stripTrackingScripts(html);
+
+  // Save filtered HTML
   const htmlPath = path.join(outDir, 'page.html');
-  fs.writeFileSync(htmlPath, html, 'utf8');
-  console.log(`[extract] page.html  (${(html.length / 1024).toFixed(1)} KB)`);
+  fs.writeFileSync(htmlPath, filteredHtml, 'utf8');
+  console.log(`[extract] page.html  (${(filteredHtml.length / 1024).toFixed(1)} KB)`);
 
   // Merge + deduplicate all asset URLs
   const all = new Set([...networkUrls, ...domUrls]);
   const assets = [];
   for (const u of all) {
     if (u.startsWith('data:') || u === rawUrl) continue;
-    assets.push({ url: u, type: categorize(u) });
+    const type = categorize(u);
+    // Skip tracking JS from manifest — functional JS is kept
+    if (type === 'js' && isTracking(u)) {
+      console.log(`[extract] skip tracking JS: ${u}`);
+      continue;
+    }
+    assets.push({ url: u, type });
   }
 
   const manifest = {

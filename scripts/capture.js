@@ -5,7 +5,7 @@
  * Supports puppeteer (default) and playwright (fallback via CLONE_BROWSER=playwright).
  *
  * Usage: node capture.js <URL>
- * Output: output/reference/desktop.png, output/reference/mobile.png
+ * Output: <cwd>/output/reference/desktop.png, <cwd>/output/reference/mobile.png
  */
 
 'use strict';
@@ -19,7 +19,8 @@ if (!url) {
   process.exit(1);
 }
 
-const outDir = path.resolve(__dirname, '../output/reference');
+const OUTPUT_DIR = path.join(process.cwd(), 'output');
+const outDir = path.join(OUTPUT_DIR, 'reference');
 fs.mkdirSync(outDir, { recursive: true });
 
 const viewports = [
