@@ -19,6 +19,11 @@ if (!referenceUrl) {
   process.exit(1);
 }
 
+try { new URL(referenceUrl); } catch {
+  console.error('[build] Invalid URL:', referenceUrl);
+  process.exit(1);
+}
+
 const OUTPUT_DIR = path.join(process.cwd(), 'output');
 const srcFile  = path.join(OUTPUT_DIR, 'src', 'index.html');
 const destFile = path.join(OUTPUT_DIR, 'src', 'index.built.html');
@@ -39,39 +44,13 @@ if (!/<meta[^>]+name=["']viewport["']/i.test(html)) {
   }
 }
 
-// ── Overlay CSS ────────────────────────────────────────────────────────────
-const overlayStyle = `
-<style id="clone-overlay-style">
-  #clone-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0.5;
-    pointer-events: none;
-    z-index: 9999;
-    border: none;
-    display: none;
-  }
+// ── Load overlay assets ────────────────────────────────────────────────────
+const overlayCss = fs.readFileSync(path.join(__dirname, '../src/overlay.css'), 'utf8');
+const overlayJs  = fs.readFileSync(path.join(__dirname, '../src/overlay.js'), 'utf8');
 
-  #clone-overlay-hud {
-    position: fixed;
-    bottom: 14px;
-    right: 14px;
-    background: rgba(0, 0, 0, 0.72);
-    color: #fff;
-    font: 600 11px/1.5 ui-monospace, monospace;
-    padding: 5px 10px;
-    border-radius: 6px;
-    z-index: 10000;
-    pointer-events: none;
-    user-select: none;
-    letter-spacing: 0.03em;
-  }
-</style>`;
+const overlayStyle = `<style id="clone-overlay-style">\n${overlayCss}</style>`;
 
-// ── Overlay HTML elements ──────────────────────────────────────────────────
+// overlayHtml is dynamic — embeds the reference URL at build time
 const overlayHtml = `
 <!-- clone overlay: live iframe -->
 <iframe
@@ -80,48 +59,7 @@ const overlayHtml = `
 ></iframe>
 <div id="clone-overlay-hud">[O] overlay OFF</div>`;
 
-// ── Overlay toggle + scroll sync script ───────────────────────────────────
-const overlayScript = `
-<script id="clone-overlay-script">
-(function () {
-  'use strict';
-  var overlay = document.getElementById('clone-overlay');
-  var hud     = document.getElementById('clone-overlay-hud');
-  var visible = false;
-  var opacity = 0.5;
-
-  function update() {
-    overlay.style.display = visible ? 'block' : 'none';
-    overlay.style.opacity = opacity;
-    hud.textContent = '[O] overlay ' + (visible ? 'ON' : 'OFF') +
-      (visible ? '  |  wheel = opacity (' + Math.round(opacity * 100) + '%)' : '');
-  }
-
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'o' || e.key === 'O') {
-      visible = !visible;
-      update();
-    }
-  });
-
-  document.addEventListener('wheel', function (e) {
-    if (!visible) return;
-    opacity = Math.min(1, Math.max(0.05, opacity - e.deltaY * 0.001));
-    update();
-  }, { passive: true });
-
-  window.addEventListener('scroll', function () {
-    if (!visible) return;
-    try {
-      overlay.contentWindow.scrollTo(window.scrollX, window.scrollY);
-    } catch (err) {
-      // cross-origin scroll blocked — expected for external URLs
-    }
-  });
-
-  update();
-})();
-</script>`;
+const overlayScript = `<script id="clone-overlay-script">\n${overlayJs}</script>`;
 
 // ── Inject into <head> ─────────────────────────────────────────────────────
 if (/<\/head>/i.test(html)) {

@@ -3,10 +3,11 @@
   "version": "1.1.1",
   "description": "Pixel-perfect webpage cloning skill for Claude Code",
   "scripts": {
-    "setup":   "npm install",
-    "capture": "node scripts/capture.js",
-    "extract": "node scripts/extract.js",
-    "build":   "node scripts/build.js"
+    "setup":        "npm install",
+    "requirements": "pip3 install -r requirements.txt",
+    "capture":      "node scripts/capture.js",
+    "extract":      "node scripts/extract.js",
+    "build":        "node scripts/build.js"
   },
   "dependencies": {
     "fs-extra":   "^11.0.0",

@@ -1,0 +1,27 @@
+#clone-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 9999;
+  border: none;
+  display: none;
+}
+
+#clone-overlay-hud {
+  position: fixed;
+  bottom: 14px;
+  right: 14px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font: 600 11px/1.5 ui-monospace, monospace;
+  padding: 5px 10px;
+  border-radius: 6px;
+  z-index: 10000;
+  pointer-events: none;
+  user-select: none;
+  letter-spacing: 0.03em;
+}

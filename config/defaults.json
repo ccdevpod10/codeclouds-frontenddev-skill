@@ -1,0 +1,15 @@
+{
+  "concurrency": 8,
+  "retryLimit": 3,
+  "retryDelay": 1500,
+  "timeout": 60000,
+  "requestTimeout": 20000,
+  "scrollDelay": 600,
+  "maxFileSize": 10485760,
+  "viewports": [
+    { "name": "desktop", "width": 1440, "height": 900 },
+    { "name": "mobile",  "width": 375,  "height": 812 }
+  ],
+  "overlayZIndex": 9999,
+  "overlayOpacity": 0.5
+}

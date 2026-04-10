@@ -22,11 +22,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from bs4 import BeautifulSoup
 
-# ── Config ────────────────────────────────────────────────────────────────────
-CONCURRENCY  = 8
-RETRY_LIMIT  = 3
-RETRY_DELAY  = 1.5
-TIMEOUT      = 20
+# ── Config ─────────────────────────────────────────────────────────────────
+_root = Path(__file__).resolve().parent.parent
+_cfg  = json.loads((_root / 'config' / 'defaults.json').read_text())
+
+CONCURRENCY  = _cfg['concurrency']
+RETRY_LIMIT  = _cfg['retryLimit']
+RETRY_DELAY  = _cfg['retryDelay'] / 1000        # ms → seconds
+TIMEOUT      = _cfg['requestTimeout'] / 1000    # ms → seconds
+
+TRACKING_PATTERNS = json.loads((_root / 'config' / 'tracking-patterns.json').read_text())
 
 HEADERS = {
     'User-Agent': (
@@ -38,21 +43,11 @@ HEADERS = {
     'Accept-Encoding': 'gzip, deflate, br',
 }
 
-# ── Tracking patterns (strip from HTML, skip download) ────────────────────────
-TRACKING_PATTERNS = [
-    'googletagmanager',
-    'gtag',
-    'facebook.net',
-    'fbevents',
-    'analytics',
-    'pixel',
-]
-
 def is_tracking(url: str) -> bool:
     lower = url.lower()
     return any(p in lower for p in TRACKING_PATTERNS)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+# ── Paths ──────────────────────────────────────────────────────────────────
 if len(sys.argv) < 2:
     print('Usage: python3 downloader.py <manifest.json>', file=sys.stderr)
     sys.exit(1)
@@ -71,15 +66,23 @@ reference_dir = root_dir / 'reference'
 assets_dir.mkdir(parents=True, exist_ok=True)
 src_dir.mkdir(parents=True, exist_ok=True)
 
+# ── Manifest validation ────────────────────────────────────────────────────
 manifest   = json.loads(manifest_path.read_text())
 source_url = manifest.get('sourceUrl', '')
 assets     = manifest.get('assets', [])
 page_html  = reference_dir / manifest.get('pageHtml', 'page.html')
 
+if not source_url:
+    print('ERROR: manifest.json missing "sourceUrl"', file=sys.stderr)
+    sys.exit(1)
+if not isinstance(assets, list):
+    print('ERROR: manifest.json "assets" must be a list', file=sys.stderr)
+    sys.exit(1)
+
 session = requests.Session()
 session.headers.update(HEADERS)
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────
 def type_dir(asset_type: str) -> Path:
     d = assets_dir / asset_type
     d.mkdir(parents=True, exist_ok=True)
@@ -103,14 +106,16 @@ def safe_dest(url: str, asset_type: str) -> Path:
 
 
 def download_one(entry: dict) -> tuple:
-    url       = entry['url']
-    atype     = entry.get('type', 'other')
-    dest      = safe_dest(url, atype)
-    origin_f  = dest.with_suffix(dest.suffix + '.origin')
+    url      = entry['url']
+    atype    = entry.get('type', 'other')
+    dest     = safe_dest(url, atype)
+    origin_f = dest.with_suffix(dest.suffix + '.origin')
 
-    for attempt in range(1, RETRY_LIMIT + 1):
+    for attempt in range(RETRY_LIMIT):
         try:
             resp = session.get(url, timeout=TIMEOUT, stream=True)
+            if 400 <= resp.status_code < 500:
+                return (url, None, f'SKIP {resp.status_code}')  # permanent failure, don't retry
             resp.raise_for_status()
             content = resp.content
             dest.write_bytes(content)
@@ -118,13 +123,13 @@ def download_one(entry: dict) -> tuple:
             size_kb = len(content) // 1024
             return (url, str(dest), f'OK {size_kb}KB')
         except Exception as exc:
-            if attempt < RETRY_LIMIT:
-                time.sleep(RETRY_DELAY)
+            if attempt < RETRY_LIMIT - 1:
+                time.sleep(RETRY_DELAY * (2 ** attempt))  # 1.5s, 3s, 6s
             else:
                 return (url, None, f'FAILED: {exc}')
 
 
-# ── Download ──────────────────────────────────────────────────────────────────
+# ── Download ───────────────────────────────────────────────────────────────
 print(f'[downloader] {len(assets)} assets  (concurrency={CONCURRENCY})')
 print(f'[downloader] output root: {root_dir}')
 
@@ -148,10 +153,10 @@ if failed:
     for u in failed:
         print(f'  SKIP  {u}')
 
-# ── Rewrite HTML ──────────────────────────────────────────────────────────────
+# ── Rewrite HTML ───────────────────────────────────────────────────────────
 if not page_html.exists():
-    print(f'[downloader] ERROR: page.html not found at {page_html}')
-    print('[downloader] run extract.js first')
+    print(f'[downloader] ERROR: page.html not found at {page_html}', file=sys.stderr)
+    print('[downloader] run extract.js first', file=sys.stderr)
     sys.exit(1)
 
 raw_html = page_html.read_text(errors='replace')
@@ -171,7 +176,7 @@ def rewrite_attr(tag, attr):
         tag[attr] = rel(local)
 
 
-# ── Strip tracking scripts from HTML ─────────────────────────────────────────
+# ── Strip tracking scripts from HTML ──────────────────────────────────────
 stripped = 0
 for el in soup.find_all('script', src=True):
     src = el.get('src', '')
@@ -183,8 +188,7 @@ for el in soup.find_all('script', src=True):
 if stripped:
     print(f'[downloader] stripped {stripped} tracking script(s)')
 
-# ── Rewrite asset paths ───────────────────────────────────────────────────────
-# link[href], script[src], img[src], source[src], video[src], audio[src]
+# ── Rewrite asset paths ────────────────────────────────────────────────────
 for el in soup.find_all('link', href=True):
     rewrite_attr(el, 'href')
 for el in soup.find_all('script', src=True):
@@ -192,7 +196,6 @@ for el in soup.find_all('script', src=True):
 for el in soup.find_all(['img', 'source', 'video', 'audio'], src=True):
     rewrite_attr(el, 'src')
 
-# img[srcset], source[srcset]
 for el in soup.find_all(srcset=True):
     parts = el['srcset'].split(',')
     new_parts = []
@@ -205,7 +208,6 @@ for el in soup.find_all(srcset=True):
         new_parts.append(' '.join(tokens))
     el['srcset'] = ', '.join(new_parts)
 
-# Inline style url() in style attributes
 def rewrite_inline_style(style_str: str) -> str:
     def replacer(m):
         inner = m.group(1)
@@ -216,12 +218,11 @@ def rewrite_inline_style(style_str: str) -> str:
 for el in soup.find_all(style=True):
     el['style'] = rewrite_inline_style(el['style'])
 
-# <style> blocks — inline CSS url()
 for el in soup.find_all('style'):
     if el.string:
         el.string = rewrite_inline_style(el.string)
 
-# ── Rewrite JS src paths in downloaded JS files ───────────────────────────────
+# ── Rewrite JS src paths in downloaded JS files ────────────────────────────
 js_dir = assets_dir / 'js'
 if js_dir.exists():
     for js_file in js_dir.glob('*.js'):
